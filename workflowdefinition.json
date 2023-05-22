@@ -1,0 +1,410 @@
+{
+    "definition": {
+        "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+        "actions": {
+            "ForEachContainerSpec": {
+                "actions": {
+                    "ComposeTagIgnoreStringVariable": {
+                        "inputs": "@variables('TagIgnoreString')",
+                        "runAfter": {
+                            "ParseJSON": [
+                                "Succeeded"
+                            ]
+                        },
+                        "type": "Compose"
+                    },
+                    "ComposeTagIncludeStringVariable": {
+                        "inputs": "@variables('TagIncludeString')",
+                        "runAfter": {
+                            "ComposeTagIgnoreStringVariable": [
+                                "Succeeded"
+                            ]
+                        },
+                        "type": "Compose"
+                    },
+                    "GetTagList": {
+                        "inputs": {
+                            "method": "GET",
+                            "uri": "@variables('ContainerTagListURL')"
+                        },
+                        "runAfter": {
+                            "SetVarTagIncludeString": [
+                                "Succeeded"
+                            ]
+                        },
+                        "type": "Http"
+                    },
+                    "JSFilterTagList": {
+                        "inputs": {
+                            "code": "var tagArray = workflowContext.actions.ParseJSON.outputs.body.tags;\r\nvar removeElementString = workflowContext.actions.ComposeTagIgnoreStringVariable.outputs;\r\nvar filterElementsString = workflowContext.actions.ComposeTagIncludeStringVariable.outputs;\r\nfunction removeElementsWithSubstring(arr, substring) { return arr.filter(item => !item.includes(substring));}\r\nfunction removeElementsWithoutSubstring(arr, substring) {  return arr.filter(item => item.includes(substring));}\r\nif ( removeElementString !== \"\") {var tagArray = removeElementsWithSubstring(tagArray, removeElementString );}\r\nif ( filterElementsString !== \"\" ) {var tagArray = removeElementsWithoutSubstring(tagArray,filterElementsString );}\r\nreturn tagArray;"
+                        },
+                        "runAfter": {
+                            "ComposeTagIncludeStringVariable": [
+                                "Succeeded"
+                            ]
+                        },
+                        "type": "JavaScriptCode"
+                    },
+                    "JSGetLatestTagVersion": {
+                        "inputs": {
+                            "code": "var tagArray = workflowContext.actions.JSFilterTagList.outputs.body\r\nvar latestTag = \"0.0.0\";\r\ntagArray.forEach( item => {\r\n    var testVersionString = item.split('-')[0]\r\n    const testVersionStringArray = testVersionString.split('.').map(Number)\r\n    const latestTagVersionString = latestTag.split('-')[0];\r\n    const latestVersionArray = latestTagVersionString.split('.').map(Number)\r\n    for ( let i = 0; i < Math.max(testVersionStringArray.length, latestVersionArray.length); i++) {\r\n        const testVersionElement = testVersionStringArray[i] || 0;\r\n        const latestVersionElement = latestVersionArray[i] || 0;\r\n        if ( testVersionElement < latestVersionElement) {   \r\n            continue;\r\n        } else if ( testVersionElement > latestVersionElement ) {\r\n            latestTag = item;\r\n            break;\r\n        }\r\n    };\r\n});\r\nreturn latestTag;"
+                        },
+                        "runAfter": {
+                            "JSFilterTagList": [
+                                "Succeeded"
+                            ]
+                        },
+                        "type": "JavaScriptCode"
+                    },
+                    "ParseJSON": {
+                        "inputs": {
+                            "content": "@body('GetTagList')",
+                            "schema": {
+                                "properties": {
+                                    "name": {
+                                        "type": "string"
+                                    },
+                                    "tags": {
+                                        "items": {
+                                            "type": "string"
+                                        },
+                                        "type": "array"
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        },
+                        "runAfter": {
+                            "GetTagList": [
+                                "Succeeded"
+                            ]
+                        },
+                        "type": "ParseJson"
+                    },
+                    "SendEmailIfNewVersion": {
+                        "actions": {
+                            "Send_email_(V4)": {
+                                "inputs": {
+                                    "body": {
+                                        "from": "from@email.com",
+                                        "ishtml": true,
+                                        "subject": "New Container Versions Available",
+                                        "text": "<p>A new version of @{variables('PublisherName')} \\ @{variables('ContainerName')} container is available.<br>\n<br>\nLatest Version: @{variables('LatestTagVersion')}<br>\n<br>\nLast Known Version: @{variables('LastKnownVersion')}</p>",
+                                        "to": "to@email.com"
+                                    },
+                                    "host": {
+                                        "connection": {
+                                            "name": "@parameters('$connections')['sendgrid']['connectionId']"
+                                        }
+                                    },
+                                    "method": "post",
+                                    "path": "/v4/mail/send"
+                                },
+                                "runAfter": {
+                                    "UpdateTagVersionTableEntry": [
+                                        "Succeeded"
+                                    ]
+                                },
+                                "type": "ApiConnection"
+                            },
+                            "UpdateTagVersionTableEntry": {
+                                "inputs": {
+                                    "body": {
+                                        "ContainerTagListURL": "@variables('ContainerTagListURL')",
+                                        "LastKnownVersion": "@variables('LatestTagVersion')",
+                                        "TagIgnoreString": "@variables('TagIgnoreString')",
+                                        "TagIncludeString": "@variables('TagIncludeString')"
+                                    },
+                                    "headers": {
+                                        "If-Match": "*"
+                                    },
+                                    "host": {
+                                        "connection": {
+                                            "name": "@parameters('$connections')['azuretables']['connectionId']"
+                                        }
+                                    },
+                                    "method": "put",
+                                    "path": "/v2/storageAccounts/@{encodeURIComponent(encodeURIComponent('AccountNameFromSettings'))}/tables/@{encodeURIComponent('lastcontainerversiontable')}/entities/etag(PartitionKey='@{encodeURIComponent(variables('PublisherName'))}',RowKey='@{encodeURIComponent(variables('ContainerName'))}')"
+                                },
+                                "runAfter": {},
+                                "type": "ApiConnection"
+                            }
+                        },
+                        "expression": {
+                            "and": [
+                                {
+                                    "not": {
+                                        "equals": [
+                                            "@variables('LastKnownVersion')",
+                                            "@variables('LatestTagVersion')"
+                                        ]
+                                    }
+                                }
+                            ]
+                        },
+                        "runAfter": {
+                            "SetVar-LatestTagVersion": [
+                                "Succeeded"
+                            ]
+                        },
+                        "type": "If"
+                    },
+                    "SetVar-ContainerName": {
+                        "inputs": {
+                            "name": "ContainerName",
+                            "value": "@{items('ForEachContainerSpec')?['RowKey']}"
+                        },
+                        "runAfter": {
+                            "SetVar-LastKnownVersion": [
+                                "Succeeded"
+                            ]
+                        },
+                        "type": "SetVariable"
+                    },
+                    "SetVar-ContainerTagListURL": {
+                        "inputs": {
+                            "name": "ContainerTagListURL",
+                            "value": "@{items('ForEachContainerSpec')?['ContainerTagListURL']}"
+                        },
+                        "runAfter": {},
+                        "type": "SetVariable"
+                    },
+                    "SetVar-LastKnownVersion": {
+                        "inputs": {
+                            "name": "LastKnownVersion",
+                            "value": "@{items('ForEachContainerSpec')?['LastKnownVersion']}"
+                        },
+                        "runAfter": {
+                            "SetVar-ContainerTagListURL": [
+                                "Succeeded"
+                            ]
+                        },
+                        "type": "SetVariable"
+                    },
+                    "SetVar-LatestTagVersion": {
+                        "inputs": {
+                            "name": "LatestTagVersion",
+                            "value": "@{body('JSGetLatestTagVersion')}"
+                        },
+                        "runAfter": {
+                            "JSGetLatestTagVersion": [
+                                "Succeeded"
+                            ]
+                        },
+                        "type": "SetVariable"
+                    },
+                    "SetVar-PublisherName": {
+                        "inputs": {
+                            "name": "PublisherName",
+                            "value": "@{items('ForEachContainerSpec')?['PartitionKey']}"
+                        },
+                        "runAfter": {
+                            "SetVar-ContainerName": [
+                                "Succeeded"
+                            ]
+                        },
+                        "type": "SetVariable"
+                    },
+                    "SetVarTagIgnoreString": {
+                        "inputs": {
+                            "name": "TagIgnoreString",
+                            "value": "@{items('ForEachContainerSpec')?['TagIgnoreString']}"
+                        },
+                        "runAfter": {
+                            "SetVar-PublisherName": [
+                                "Succeeded"
+                            ]
+                        },
+                        "type": "SetVariable"
+                    },
+                    "SetVarTagIncludeString": {
+                        "inputs": {
+                            "name": "TagIncludeString",
+                            "value": "@{items('ForEachContainerSpec')?['TagIncludeString']}"
+                        },
+                        "runAfter": {
+                            "SetVarTagIgnoreString": [
+                                "Succeeded"
+                            ]
+                        },
+                        "type": "SetVariable"
+                    }
+                },
+                "foreach": "@body('GetContainerSpecsFromTable')?['value']",
+                "runAfter": {
+                    "GetContainerSpecsFromTable": [
+                        "Succeeded"
+                    ]
+                },
+                "runtimeConfiguration": {
+                    "concurrency": {
+                        "repetitions": 1
+                    }
+                },
+                "type": "Foreach"
+            },
+            "GetContainerSpecsFromTable": {
+                "inputs": {
+                    "host": {
+                        "connection": {
+                            "name": "@parameters('$connections')['azuretables']['connectionId']"
+                        }
+                    },
+                    "method": "get",
+                    "path": "/v2/storageAccounts/@{encodeURIComponent(encodeURIComponent('AccountNameFromSettings'))}/tables/@{encodeURIComponent('lastcontainerversiontable')}/entities"
+                },
+                "runAfter": {
+                    "InitialiseVar-TagIncludeString": [
+                        "Succeeded"
+                    ]
+                },
+                "type": "ApiConnection"
+            },
+            "InitialiseVar-ContainerName": {
+                "inputs": {
+                    "variables": [
+                        {
+                            "name": "ContainerName",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "runAfter": {
+                    "InitialiseVar-LatestTagVersion": [
+                        "Succeeded"
+                    ]
+                },
+                "type": "InitializeVariable"
+            },
+            "InitialiseVar-ContainerTagListURL": {
+                "inputs": {
+                    "variables": [
+                        {
+                            "name": "ContainerTagListURL",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "runAfter": {},
+                "type": "InitializeVariable"
+            },
+            "InitialiseVar-LastKnownVersion": {
+                "inputs": {
+                    "variables": [
+                        {
+                            "name": "LastKnownVersion",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "runAfter": {
+                    "InitialiseVar-ContainerTagListURL": [
+                        "Succeeded"
+                    ]
+                },
+                "type": "InitializeVariable"
+            },
+            "InitialiseVar-LatestTagVersion": {
+                "inputs": {
+                    "variables": [
+                        {
+                            "name": "LatestTagVersion",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "runAfter": {
+                    "InitialiseVar-LastKnownVersion": [
+                        "Succeeded"
+                    ]
+                },
+                "type": "InitializeVariable"
+            },
+            "InitialiseVar-PublisherName": {
+                "inputs": {
+                    "variables": [
+                        {
+                            "name": "PublisherName",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "runAfter": {
+                    "InitialiseVar-ContainerName": [
+                        "Succeeded"
+                    ]
+                },
+                "type": "InitializeVariable"
+            },
+            "InitialiseVar-TagIgnoreString": {
+                "inputs": {
+                    "variables": [
+                        {
+                            "name": "TagIgnoreString",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "runAfter": {
+                    "InitialiseVar-PublisherName": [
+                        "Succeeded"
+                    ]
+                },
+                "type": "InitializeVariable"
+            },
+            "InitialiseVar-TagIncludeString": {
+                "inputs": {
+                    "variables": [
+                        {
+                            "name": "TagIncludeString",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "runAfter": {
+                    "InitialiseVar-TagIgnoreString": [
+                        "Succeeded"
+                    ]
+                },
+                "type": "InitializeVariable"
+            }
+        },
+        "contentVersion": "1.0.0.0",
+        "outputs": {},
+        "parameters": {
+            "$connections": {
+                "defaultValue": {},
+                "type": "Object"
+            }
+        },
+        "triggers": {
+            "Recurrence": {
+                "evaluatedRecurrence": {
+                    "frequency": "Week",
+                    "interval": 1
+                },
+                "recurrence": {
+                    "frequency": "Week",
+                    "interval": 1
+                },
+                "type": "Recurrence"
+            }
+        }
+    },
+    "parameters": {
+        "$connections": {
+            "value": {
+                "azuretables": {
+                    "connectionId": "/subscriptions/2b118878-de76-4a11-a0ee-21a9a65e0a22/resourceGroups/container_tag_notifications/providers/Microsoft.Web/connections/azuretables-2",
+                    "connectionName": "azuretables-2",
+                    "id": "/subscriptions/2b118878-de76-4a11-a0ee-21a9a65e0a22/providers/Microsoft.Web/locations/uksouth/managedApis/azuretables"
+                },
+                "sendgrid": {
+                    "connectionId": "/subscriptions/2b118878-de76-4a11-a0ee-21a9a65e0a22/resourceGroups/container_tag_notifications/providers/Microsoft.Web/connections/sendgrid",
+                    "connectionName": "sendgrid",
+                    "id": "/subscriptions/2b118878-de76-4a11-a0ee-21a9a65e0a22/providers/Microsoft.Web/locations/uksouth/managedApis/sendgrid"
+                }
+            }
+        }
+    }
+}
