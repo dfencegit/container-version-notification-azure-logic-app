@@ -28,7 +28,7 @@
                             "uri": "@variables('ContainerTagListURL')"
                         },
                         "runAfter": {
-                            "SetVarTagIncludeString": [
+                            "SetVar-NotificationEmailList": [
                                 "Succeeded"
                             ]
                         },
@@ -86,11 +86,11 @@
                             "Send_email_(V4)": {
                                 "inputs": {
                                     "body": {
-                                        "from": "from@email.com",
+                                        "from": "sendgrid@dfence.com",
                                         "ishtml": true,
                                         "subject": "New Container Versions Available",
-                                        "text": "<p>A new version of @{variables('PublisherName')} \\ @{variables('ContainerName')} container is available.<br>\n<br>\nLatest Version: @{variables('LatestTagVersion')}<br>\n<br>\nLast Known Version: @{variables('LastKnownVersion')}</p>",
-                                        "to": "to@email.com"
+                                        "text": "<p>A new version of @{variables('PublisherName')} \\ @{variables('ContainerName')} container is available.<br>\n<br>\nTag List URL: @{variables('ContainerTagListURL')}<br>\n<br>\nLatest Version: @{variables('LatestTagVersion')}<br>\n<br>\nLast Known Version: @{variables('LastKnownVersion')}</p>",
+                                        "to": "@variables('NotificationEmailList')"
                                     },
                                     "host": {
                                         "connection": {
@@ -112,6 +112,7 @@
                                     "body": {
                                         "ContainerTagListURL": "@variables('ContainerTagListURL')",
                                         "LastKnownVersion": "@variables('LatestTagVersion')",
+                                        "NotificationEmailList": "@variables('NotificationEmailList')",
                                         "TagIgnoreString": "@variables('TagIgnoreString')",
                                         "TagIncludeString": "@variables('TagIncludeString')"
                                     },
@@ -193,6 +194,18 @@
                         },
                         "type": "SetVariable"
                     },
+                    "SetVar-NotificationEmailList": {
+                        "inputs": {
+                            "name": "NotificationEmailList",
+                            "value": "@{items('ForEachContainerSpec')?['NotificationEmailList']}"
+                        },
+                        "runAfter": {
+                            "SetVarTagIncludeString": [
+                                "Succeeded"
+                            ]
+                        },
+                        "type": "SetVariable"
+                    },
                     "SetVar-PublisherName": {
                         "inputs": {
                             "name": "PublisherName",
@@ -254,7 +267,7 @@
                     "path": "/v2/storageAccounts/@{encodeURIComponent(encodeURIComponent('AccountNameFromSettings'))}/tables/@{encodeURIComponent('lastcontainerversiontable')}/entities"
                 },
                 "runAfter": {
-                    "InitialiseVar-TagIncludeString": [
+                    "InitialiseVar-NotificationEmailList": [
                         "Succeeded"
                     ]
                 },
@@ -315,6 +328,22 @@
                 },
                 "runAfter": {
                     "InitialiseVar-LastKnownVersion": [
+                        "Succeeded"
+                    ]
+                },
+                "type": "InitializeVariable"
+            },
+            "InitialiseVar-NotificationEmailList": {
+                "inputs": {
+                    "variables": [
+                        {
+                            "name": "NotificationEmailList",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "runAfter": {
+                    "InitialiseVar-TagIncludeString": [
                         "Succeeded"
                     ]
                 },
